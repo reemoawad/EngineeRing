@@ -283,4 +283,4 @@ Key tuning constants are defined at the top of `Final Code.py`:
 
 ## Authors
 
-- **Reemo Awad**, **Will Craychee**, **Roman Guerrero**, **Anna Leonhardt**, **Jeriah Navarro**
+- **Reem Awad**, **Will Craychee**, **Roman Guerrero**, **Anna Leonhardt**, **Jeriah Navarro**
