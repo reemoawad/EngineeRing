@@ -15,15 +15,14 @@ In the background, the app silently tracks rehabilitation metrics for every sess
 ## Features
 
 - **Wireless BLE connectivity** via the Nordic UART Service (NUS)
-- **Real-time cursor control** driven by wrist tilt (accelerometer/gyroscope fusion)
+- **Three operating modes** — Pointer, Typing, and Presentation — all under a unified Universal mode framework
 - **Gesture recognition** — left-click, right-click, double-click, and long-press
 - **Scroll mode** — tilt the ring to scroll pages up, down, left, or right
 - **Zoom** — long-press + tilt or triple-tap SPACE to zoom in/out
-- **Presentation mode** — auto-detected for PowerPoint and Google Slides; use the ring as a clicker/laser pointer
-- **Typing mode** — temporarily suspends cursor control so you can type normally
 - **Interactive gravity calibration** — press `c` to re-calibrate the gravity/bias baseline
 - **Cursor re-center** — press `r` to snap the cursor back to center and zero the filters
 - **HUD overlay** — a lightweight Tkinter heads-up display shows connection status, current mode, and live IMU data
+- **Blocking and non-blocking notifications** — important alerts pause the app until dismissed; minor status updates appear as unobtrusive overlays
 - **Background rehabilitation tracking** — passive motion analytics collected every session with no extra setup
 - **Cross-platform** — runs on macOS and Windows (Linux untested)
 
@@ -31,13 +30,120 @@ In the background, the app silently tracks rehabilitation metrics for every sess
 
 ## Operating Modes
 
-The ring operates in one of three modes at any time, shown in the HUD overlay:
+All functionality is organized under a single **Universal mode** framework. Within it, the app operates in one of three sub-modes at any time, displayed in the HUD overlay.
 
-**Regular mode** is the default. Wrist tilt moves the cursor; button presses fire left- and right-click events. Scroll, zoom, and edge-scroll gestures are all active.
+### Pointer Mode
 
-**Typing mode** is engaged automatically when keyboard activity is detected. Cursor movement is suppressed so normal typing is uninterrupted. The ring resumes Regular mode after a short period of inactivity.
+The default sub-mode. Wrist tilt moves the cursor; button presses fire left- and right-click events. Scroll, zoom, and edge-scroll gestures are all active.
 
-**Presentation mode** is activated automatically when PowerPoint or Google Slides is the foreground application (detected via AppleScript on macOS or `pygetwindow` on Windows). In this mode the ring acts as a wireless clicker and laser-pointer controller — button 1 advances slides, button 2 goes back, and a long-press toggles the laser pointer effect.
+### Typing Mode
+
+Engaged automatically when keyboard activity is detected, or switched to manually. Cursor movement is suppressed so normal typing is uninterrupted. Typing mode supports two text-entry methods:
+
+- **Click to type** — the user physically clicks a key or button to register each character input. Prioritizes deliberate, precise input.
+- **Dwell to type** — hovering over a target for a set duration triggers the input automatically, enabling hands-free or reduced-dexterity text entry.
+
+The ring returns to Pointer mode after a short period of inactivity.
+
+### Presentation Mode
+
+Activated automatically when a supported presentation application is detected as the foreground window. In this mode the ring acts as a wireless clicker and laser-pointer controller.
+
+- **Google Slides** — detected via active Chrome tab URL (macOS AppleScript or equivalent)
+- **Microsoft PowerPoint** — detected via active window title on macOS and Windows
+
+In both cases: button 1 advances slides, button 2 goes back, and a long-press toggles the laser pointer effect.
+
+---
+
+## Rehabilitation Metrics
+
+The app passively collects motion analytics throughout every ring session with no configuration required. When the session ends (pressing `q` or closing the window), two output files are automatically saved to the working directory:
+
+- **`rehab_session_<timestamp>.json`** — full session metrics report
+- **`rehab_session_<timestamp>_rom.png`** — Range of Motion vs. Time graph for the session
+
+The ROM vs. Time graph is generated using `matplotlib`, plotting instantaneous range of motion (degrees) over the full session duration. It makes it easy to visually identify periods of high activity, fatigue onset, and consistency of movement across a therapy session.
+
+A summary of the session metrics is also displayed directly to the user in the terminal and HUD at session end.
+
+### Metric Definitions
+
+**Motion metrics** describe the quality and quantity of wrist movement:
+
+| Metric | Description |
+|--------|-------------|
+| `avg_rom_deg` | Mean range of motion per movement cycle (degrees) |
+| `max_rom_deg` | Peak range of motion recorded in the session (degrees) |
+| `avg_ang_vel_deg_s` | Average angular velocity (degrees/second) |
+| `max_ang_vel_deg_s` | Peak angular velocity (degrees/second) |
+| `estimated_reps` | Estimated number of discrete wrist movement repetitions |
+| `smoothness_index` | Movement smoothness (lower = smoother) |
+| `jerk_index` | Jerk magnitude (lower = more controlled movement) |
+| `tremor_index` | High-frequency oscillation level (lower = less tremor) |
+| `active_usage_s` | Total seconds of detected active motion |
+| `active_usage_fraction` | Fraction of session time spent in active motion (0–1) |
+| `rom_variability_std_deg` | Standard deviation of ROM across reps (degrees) |
+
+**Functional metrics** capture computer-interaction activity during the session:
+
+| Metric | Description |
+|--------|-------------|
+| `typed_letters` | Total keystrokes detected while in Typing mode |
+| `typed_letters_per_min` | Typing rate (characters per minute) |
+
+**Fatigue metrics** compare the first and second halves of the session to estimate fatigue:
+
+| Metric | Description |
+|--------|-------------|
+| `rom_drop_percent` | Percent decrease in average ROM from first to second half |
+| `speed_drop_percent` | Percent decrease in average angular velocity, first to second half |
+| `smoothness_change_percent` | Percent change in smoothness index, first to second half |
+
+---
+
+## HUD Visual Feedback
+
+A persistent heads-up display (HUD) rendered via Tkinter sits in the corner of the screen throughout the session. It provides at-a-glance feedback without interrupting the user's workflow.
+
+The HUD shows:
+
+- **Connection status** — whether the ring is connected, scanning, or disconnected
+- **Current mode** — which sub-mode is active (Pointer, Typing, or Presentation)
+- **Live IMU data** — real-time accelerometer and gyroscope readings
+- **Active notifications** — non-blocking status messages that appear and fade automatically
+- **Session info** — elapsed session time and active usage indicator
+
+The HUD is designed to be unobtrusive and stays on top of other windows so it is always visible.
+
+---
+
+## Blocking and Non-Blocking Notifications
+
+The app uses two distinct notification styles depending on the urgency and nature of the message.
+
+### Blocking Notifications
+
+Blocking notifications are modal dialogs that pause the application and require the user to acknowledge them before proceeding. They are used for situations where the user must be informed and the app cannot safely continue without a response.
+
+Examples of blocking notifications:
+
+- BLE connection failure — ring not found after scanning
+- Calibration required before the session can begin
+- Critical IMU data error or packet loss
+- Session save failure (could not write JSON or PNG to disk)
+
+### Non-Blocking Notifications
+
+Non-blocking notifications appear as brief overlay messages in the HUD and fade automatically after a few seconds. They inform the user of routine status changes without interrupting their workflow.
+
+Examples of non-blocking notifications:
+
+- Mode switch (e.g., "Switched to Typing mode")
+- Successful BLE reconnect after brief dropout
+- Calibration complete
+- Rehab metrics saved successfully at session end
+- Low activity warning during a therapy session
 
 ---
 
@@ -119,94 +225,12 @@ Key tuning constants are defined at the top of `Final Code.py`:
 
 ---
 
-## Rehabilitation Metrics
-
-The app passively collects motion analytics throughout every ring session with no configuration required. When the session ends (pressing `q` or closing the window), two output files are automatically saved to the working directory:
-
-- **`rehab_session_<timestamp>.json`** — full session metrics report
-- **`rehab_session_<timestamp>_rom.png`** — Range of Motion vs. Time graph for the session
-
-### Output Files
-
-#### JSON Report
-
-```json
-{
-  "session_start_iso": "2025-12-19T12:14:53",
-  "session_end_iso": "2025-12-19T12:23:03",
-  "duration_s": 489.74,
-  "iso_year": 2025,
-  "iso_week": 51,
-  "motion_metrics": {
-    "avg_rom_deg": 29.44,
-    "max_rom_deg": 89.99,
-    "avg_ang_vel_deg_s": 44.99,
-    "max_ang_vel_deg_s": 591.78,
-    "estimated_reps": 79,
-    "smoothness_index": 0.141,
-    "jerk_index": 6.07,
-    "tremor_index": 19.57,
-    "active_usage_s": 256.21,
-    "active_usage_fraction": 0.523,
-    "rom_variability_std_deg": 22.74
-  },
-  "functional_metrics": {
-    "typed_letters": 7,
-    "typed_letters_per_min": 0.86
-  },
-  "fatigue_metrics": {
-    "rom_drop_percent": 37.08,
-    "speed_drop_percent": 44.30,
-    "smoothness_change_percent": -52.63
-  }
-}
-```
-
-#### PNG Graph
-
-A ROM vs. Time plot is generated using `matplotlib`, showing the instantaneous range of motion (degrees) sampled over the full session duration. This makes it easy to visually identify periods of high activity, fatigue onset, and consistency of movement across a therapy session.
-
-### Metric Definitions
-
-**Motion metrics** describe the quality and quantity of wrist movement:
-
-| Metric | Description |
-|--------|-------------|
-| `avg_rom_deg` | Mean range of motion per movement cycle (degrees) |
-| `max_rom_deg` | Peak range of motion recorded in the session (degrees) |
-| `avg_ang_vel_deg_s` | Average angular velocity (degrees/second) |
-| `max_ang_vel_deg_s` | Peak angular velocity (degrees/second) |
-| `estimated_reps` | Estimated number of discrete wrist movement repetitions |
-| `smoothness_index` | Movement smoothness (lower = smoother) |
-| `jerk_index` | Jerk magnitude (lower = more controlled movement) |
-| `tremor_index` | High-frequency oscillation level (lower = less tremor) |
-| `active_usage_s` | Total seconds of detected active motion |
-| `active_usage_fraction` | Fraction of session time spent in active motion (0–1) |
-| `rom_variability_std_deg` | Standard deviation of ROM across reps (degrees) |
-
-**Functional metrics** capture computer-interaction activity during the session:
-
-| Metric | Description |
-|--------|-------------|
-| `typed_letters` | Total keystrokes detected while in Typing mode |
-| `typed_letters_per_min` | Typing rate (characters per minute) |
-
-**Fatigue metrics** compare the first and second halves of the session to estimate fatigue:
-
-| Metric | Description |
-|--------|-------------|
-| `rom_drop_percent` | Percent decrease in average ROM from first to second half |
-| `speed_drop_percent` | Percent decrease in average angular velocity, first to second half |
-| `smoothness_change_percent` | Percent change in smoothness index, first to second half |
-
----
-
 ## How It Works
 
 1. **`ring_ble_input.py`** runs a background thread with its own asyncio event loop. It scans for a BLE device advertising the NUS service, connects via `bleak`, and pushes decoded IMU + button packets into a thread-safe deque.
 2. **`Final Code.py`** polls that deque at ~100 Hz, applies a low-pass filter, maps the filtered tilt vector to screen-space velocity, and calls `pyautogui` to move the cursor or fire input events.
 3. **Gesture detection** uses timing windows and button-state transitions to distinguish single-click, double-click, right-click, and long-press (zoom) gestures.
-4. **App-context detection** checks the active window on macOS (via AppleScript) or Windows (via `pygetwindow`) to automatically enable Presentation mode when PowerPoint or Google Slides is in focus.
+4. **App-context detection** checks the active window on macOS (via AppleScript) or Windows (via `pygetwindow`) to automatically switch between Pointer and Presentation sub-modes.
 5. **Rehab tracking** runs silently in the background on every frame. On session end, the collected IMU time-series is processed to compute all motion, functional, and fatigue metrics, which are written to a JSON file and a ROM vs. Time PNG graph.
 
 ---
