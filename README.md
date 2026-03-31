@@ -15,12 +15,9 @@ In the background, the app silently tracks rehabilitation metrics for every sess
 ## Features
 
 - **Wireless BLE connectivity** via the Nordic UART Service (NUS)
-- **Three operating modes** — Pointer, Typing, and Presentation — all under a unified Universal mode framework
-- **Gesture recognition** — left-click, right-click, double-click, and long-press
-- **Scroll mode** — tilt the ring to scroll pages up, down, left, or right
-- **Zoom** — long-press + tilt or triple-tap SPACE to zoom in/out
-- **Interactive gravity calibration** — press `c` to re-calibrate the gravity/bias baseline
-- **Cursor re-center** — press `r` to snap the cursor back to center and zero the filters
+- **Four operating modes** — Universal (top-level), with Regular, Typing, and Presentation sub-modes
+- **16 distinct gestures** — mapped across all modes for clicks, scroll, zoom, calibration, and more
+- **Interactive gravity calibration** — press `c` or use the two-button gesture to re-calibrate
 - **HUD overlay** — a lightweight Tkinter heads-up display shows connection status, current mode, and live IMU data
 - **Blocking and non-blocking notifications** — important alerts pause the app until dismissed; minor status updates appear as unobtrusive overlays
 - **Background rehabilitation tracking** — passive motion analytics collected every session with no extra setup
@@ -32,18 +29,27 @@ In the background, the app silently tracks rehabilitation metrics for every sess
 
 All functionality is organized under a single **Universal mode** framework. Within it, the app operates in one of three sub-modes at any time, displayed in the HUD overlay.
 
-### Pointer Mode
+```
+Universal
+├── Regular
+├── Typing
+│   ├── Click-to-Type
+│   └── Dwell-to-Type
+└── Presentation
+```
+
+### Regular Mode
 
 The default sub-mode. Wrist tilt moves the cursor; button presses fire left- and right-click events. Scroll, zoom, and edge-scroll gestures are all active.
 
 ### Typing Mode
 
-Engaged automatically when keyboard activity is detected, or switched to manually. Cursor movement is suppressed so normal typing is uninterrupted. Typing mode supports two text-entry methods:
+Engaged automatically when keyboard activity is detected, or switched to manually via gesture. Cursor movement is suppressed so normal typing is uninterrupted. Typing mode supports two text-entry methods:
 
-- **Click to type** — the user physically clicks a key or button to register each character input. Prioritizes deliberate, precise input.
-- **Dwell to type** — hovering over a target for a set duration triggers the input automatically, enabling hands-free or reduced-dexterity text entry.
+- **Click-to-Type** — the user physically clicks a button to register each character input. Prioritizes deliberate, precise input.
+- **Dwell-to-Type** — hovering over a target for a set duration triggers the input automatically, enabling hands-free or reduced-dexterity text entry.
 
-The ring returns to Pointer mode after a short period of inactivity.
+The ring returns to Regular mode after a short period of inactivity.
 
 ### Presentation Mode
 
@@ -52,7 +58,47 @@ Activated automatically when a supported presentation application is detected as
 - **Google Slides** — detected via active Chrome tab URL (macOS AppleScript or equivalent)
 - **Microsoft PowerPoint** — detected via active window title on macOS and Windows
 
-In both cases: button 1 advances slides, button 2 goes back, and a long-press toggles the laser pointer effect.
+---
+
+## Gesture Reference
+
+### Universal Gestures
+
+These gestures are available in all modes.
+
+| # | Gesture | Purpose |
+|---|---------|---------|
+| 1 | Hold both buttons for 5 seconds | Exit EngineeRing |
+| 2 | Click both buttons at the same time | Calibrate |
+| 3 | Hold both buttons for 5 seconds | Disconnect ring from connected device |
+| 4 | Hold right-click button for 5 seconds | Manually switch modes |
+
+### Regular Mode Gestures
+
+| # | Gesture | Purpose |
+|---|---------|---------|
+| 5 | Click | Right click / Left click |
+| 6 | Double-click right-click button | Exit window |
+| 7 | Hold right-click button, hover in desired scroll direction | Scroll |
+| 8 | Double-click left-click button | Zoom in |
+| 9 | Hold left button | Zoom out |
+
+### Typing Mode Gestures
+
+| # | Gesture | Purpose |
+|---|---------|---------|
+| 10 | Double-click right-click | Toggle Click-to-Type ⇔ Dwell-to-Type |
+
+### Presentation Mode Gestures
+
+| # | Gesture | Purpose |
+|---|---------|---------|
+| 11 | Left-click | Next slide |
+| 12 | Right-click | Previous slide |
+| 13 | Double-click right-click | Toggle Enter Slideshow |
+| 14 | Double-click left-click | Toggle Mouse Icon ⇔ Laser |
+| 15 | Hold left-click for 1.5 seconds | Toggle Annotation Pen ⇔ Regular Mouse |
+| 16 | Triple-click left-click | Undo annotation |
 
 ---
 
@@ -109,7 +155,7 @@ A persistent heads-up display (HUD) rendered via Tkinter sits in the corner of t
 The HUD shows:
 
 - **Connection status** — whether the ring is connected, scanning, or disconnected
-- **Current mode** — which sub-mode is active (Pointer, Typing, or Presentation)
+- **Current mode** — which sub-mode is active (Regular, Typing, or Presentation)
 - **Live IMU data** — real-time accelerometer and gyroscope readings
 - **Active notifications** — non-blocking status messages that appear and fade automatically
 - **Session info** — elapsed session time and active usage indicator
@@ -229,8 +275,8 @@ Key tuning constants are defined at the top of `Final Code.py`:
 
 1. **`ring_ble_input.py`** runs a background thread with its own asyncio event loop. It scans for a BLE device advertising the NUS service, connects via `bleak`, and pushes decoded IMU + button packets into a thread-safe deque.
 2. **`Final Code.py`** polls that deque at ~100 Hz, applies a low-pass filter, maps the filtered tilt vector to screen-space velocity, and calls `pyautogui` to move the cursor or fire input events.
-3. **Gesture detection** uses timing windows and button-state transitions to distinguish single-click, double-click, right-click, and long-press (zoom) gestures.
-4. **App-context detection** checks the active window on macOS (via AppleScript) or Windows (via `pygetwindow`) to automatically switch between Pointer and Presentation sub-modes.
+3. **Gesture detection** uses timing windows and button-state transitions to distinguish all 16 gestures across modes.
+4. **App-context detection** checks the active window on macOS (via AppleScript) or Windows (via `pygetwindow`) to automatically switch between Regular and Presentation sub-modes.
 5. **Rehab tracking** runs silently in the background on every frame. On session end, the collected IMU time-series is processed to compute all motion, functional, and fatigue metrics, which are written to a JSON file and a ROM vs. Time PNG graph.
 
 ---
