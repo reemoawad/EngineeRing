@@ -237,4 +237,4 @@ Key tuning constants are defined at the top of `Final Code.py`:
 
 ## Authors
 
-- **Reemo Awad** — SDSU Senior Design, Electrical Engineering
+- **Reemo Awad**, **Will Craychee**, **Roman Guerrero**, **Anna Leonhardt**, **Jeriah Navarro**
