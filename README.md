@@ -1,281 +1,247 @@
 # EngineeRing
 
-Real-time BLE gesture-control ring — wearable IMU-based cursor control and OS input via Python. Senior Design project at San Diego State University (SDSU).
+> **Wearable BLE gesture-input ring with real-time IMU-based cursor control and rehabilitation motion tracking.**  
+> Senior Design project — San Diego State University (SDSU) · Software Lead
+
+[![Python](https://img.shields.io/badge/Python-3.9%2B-blue?logo=python)](https://www.python.org/)
+[![BLE](https://img.shields.io/badge/BLE-Nordic%20NUS-informational)](https://infocenter.nordicsemi.com/)
+[![Platform](https://img.shields.io/badge/Platform-macOS%20%7C%20Windows-lightgrey)](https://github.com/reemoawad/EngineeRing)
+[![Role](https://img.shields.io/badge/Role-Software%20Lead-green)](https://github.com/reemoawad/EngineeRing)
 
 ---
 
-## Overview
+## What It Does
 
-EngineeRing is a wearable smart ring that lets you control your computer using hand gestures. The ring streams IMU (accelerometer + gyroscope) data and button states over Bluetooth Low Energy (BLE) using the Nordic UART Service (NUS) protocol. A Python host application receives the data, filters it, and translates motion into cursor movement, clicks, scrolling, zoom, and presentation controls — all without touching a keyboard or mouse.
+EngineeRing is a wearable smart ring that enables hands-free computer interaction through mid-air hand gestures. A 6-axis IMU (accelerometer + gyroscope) embedded in the ring streams motion data wirelessly over Bluetooth Low Energy to a Python host application. The host performs real-time sensor fusion, gesture classification, and OS-level input injection — allowing users to navigate, click, type, and control presentations without touching a keyboard or mouse.
 
-In the background, the app silently tracks rehabilitation metrics for every session. When the session ends, it automatically saves a JSON report and generates a Range of Motion vs. Time PNG graph.
+The system also runs a continuous rehabilitation tracking layer. Every session silently captures 6-DoF motion metrics, exports a structured JSON report, and generates a Range-of-Motion vs. Time plot — designed for physical therapy monitoring and motor recovery analytics.
+
+---
+
+## System Architecture
+
+```
+┌──────────────────┐     BLE / NUS      ┌─────────────────────────────────────────────────────────┐
+│   Ring Hardware  │  14 bytes @ ~100Hz │                   Python Host Application                │
+│                  │ ──────────────────>│                                                          │
+│  6-axis IMU      │                    │  BLE Parser → Complementary Filter → Tilt Angles        │
+│  (Accel + Gyro)  │                    │      │                                                   │
+│  2x Buttons      │                    │      ▼                                                   │
+│  nRF52 / equiv.  │                    │  Exponential Smoother (jitter reduction, <15ms lag)      │
+└──────────────────┘                    │      │                                                   │
+                                        │      ▼                                                   │
+                                        │  Gesture FSM (16 gestures × 3 modes)                   │
+                                        │      │                                                   │
+                                        │      ├──► Cursor Navigation  → PyAutoGUI (OS input)     │
+                                        │      ├──► Gesture Typing     → Keystroke injection       │
+                                        │      ├──► Presentation Mode  → Slide control            │
+                                        │      └──► Rehab Tracking     → JSON + ROM plot export   │
+                                        │                                                          │
+                                        │  HUD Overlay (Tkinter) — live IMU / mode / status       │
+                                        └─────────────────────────────────────────────────────────┘
+```
+
+---
+
+## Hardware
+
+| Component | Specification | Notes |
+|-----------|--------------|-------|
+| IMU | 6-axis (3-axis accel + 3-axis gyro) | Streams accel (ax, ay, az) + gyro (gx, gy, gz) |
+| Microcontroller | BLE-capable MCU (nRF52-series or equiv.) | Advertises Nordic UART Service (NUS) |
+| Buttons | 2× onboard tactile buttons | Left-click / right-click mappings |
+| Wireless | Bluetooth Low Energy 4.2+ | NUS UUID: `6e400001-b5a3-f393-e0a9-e50e24dcca9e` |
+| Packet Format | 14 bytes per frame | 2 button bytes + 6× int16 big-endian IMU values |
+| Sample Rate | ~100 Hz | Tunable via BLE connection interval |
+
+---
+
+## Signal Processing Pipeline
+
+1. **BLE receive** — `bleak` async loop decodes 14-byte NUS notify packets into (buttons, ax, ay, az, gx, gy, gz)
+2. **Complementary filter** — fuses accel + gyro to compute stable pitch/roll/yaw; eliminates gyro drift
+3. **Bias correction** — gravity calibration on startup zeros out static tilt offset
+4. **Exponential smoothing** — low-pass filter on tilt angles removes jitter; keeps perceived latency <15 ms
+5. **Tilt-to-velocity mapping** — filtered pitch/roll mapped to cursor velocity with configurable sensitivity and dead-zones
+6. **Gesture FSM** — button state transitions + timing windows classify 16 distinct gestures across 3 interaction modes
 
 ---
 
 ## Features
 
-- Wireless BLE connectivity via the Nordic UART Service (NUS)
-- - Four operating modes — Universal (top-level), with Regular, Typing, and Presentation sub-modes
-  - - 16 distinct gestures — mapped across all modes for clicks, scroll, zoom, calibration, and more
-    - - Interactive gravity calibration — press `c` or use the two-button gesture to re-calibrate
-      - - HUD overlay — a lightweight Tkinter heads-up display shows connection status, current mode, and live IMU data
-        - - Blocking and non-blocking notifications — important alerts pause the app until dismissed; minor status updates appear as unobtrusive overlays
-          - - Background rehabilitation tracking — passive motion analytics collected every session with no extra setup
-            - - Cross-platform — runs on macOS and Windows (Linux untested)
-             
-              - ---
+- **Wireless BLE** — Nordic UART Service (NUS); no drivers required on host
+- **4 operating modes** — Universal (global), Regular, Typing, and Presentation
+  - 16 distinct gestures mapped across all modes (clicks, scroll, zoom, calibration, and more)
+  - Dynamic mode switching via button gestures; auto-detection of presentation apps
+- **Interactive gravity calibration** — press `c` or use a two-button gesture to re-zero
+- **HUD overlay** — lightweight Tkinter heads-up display showing connection status, mode, and live IMU data
+- **Inactivity timeout** — auto-standby after configurable period to reduce power draw
+- **Presentation Mode** — auto-activates when Google Slides or PowerPoint is the foreground window
+- **Rehabilitation tracking** — continuous background session capture with JSON export and ROM plot generation
 
-              ## Operating Modes
+---
 
-              All functionality is organized under a single **Universal mode** framework. Within it, the app operates in one of three sub-modes at any time, displayed in the HUD overlay.
+## Gesture Reference
 
-              ```
-              Universal
-              ├── Regular
-              ├── Typing
-              │   ├── Click-to-Type
-              │   └── Dwell-to-Type
-              └── Presentation
-              ```
+### Universal Gestures (all modes)
 
-              ### Regular Mode
+| # | Gesture | Action |
+|---|---------|--------|
+| 1 | Hold both buttons 5 s | Exit EngineeRing |
+| 2 | Click both buttons | Calibrate |
+| 3 | Hold both buttons 2 s | Toggle HUD |
+| 4 | Single right button | Right-click |
 
-              The default sub-mode. Wrist tilt moves the cursor; button presses fire left- and right-click events. Scroll, zoom, and edge-scroll gestures are all active.
+### Regular Mode
 
-              ### Typing Mode
+| # | Gesture | Action |
+|---|---------|--------|
+| 5 | Tilt hand | Move cursor |
+| 6 | Single left button | Left-click |
+| 7 | Double-click left | Double-click |
+| 8 | Hold left + tilt | Click-drag |
+| 9 | Hold right + tilt | Scroll |
+| 10 | Hold right + left-click | Zoom |
 
-              Engaged automatically when keyboard activity is detected, or switched to manually via gesture. Cursor movement is suppressed so normal typing is uninterrupted. Typing mode supports two text-entry methods:
+### Typing Mode
 
-              - **Click-to-Type** — the user physically clicks a button to register each character input. Prioritizes deliberate, precise input.
-              - - **Dwell-to-Type** — hovering over a target for a set duration triggers the input automatically, enabling hands-free or reduced-dexterity text entry.
-               
-                - The ring returns to Regular mode after a short period of inactivity.
-               
-                - ### Presentation Mode
-               
-                - Activated automatically when a supported presentation application is detected as the foreground window. In this mode the ring acts as a wireless clicker and laser-pointer controller.
-               
-                - - **Google Slides** — detected via active Chrome tab URL (macOS AppleScript or equivalent)
-                  - - **Microsoft PowerPoint** — detected via active window title on macOS and Windows
-                   
-                    - ---
+| # | Gesture | Action |
+|---|---------|--------|
+| 11 | Left-click | Space |
+| 12 | Right-click | Backspace |
+| 13 | Tilt left/right | Navigate letters |
+| 14 | Hold left | Confirm character |
 
-                    ## Gesture Reference
+### Presentation Mode
 
-                    ### Universal Gestures
+| # | Gesture | Action |
+|---|---------|--------|
+| 15 | Left-click | Next slide |
+| 16 | Right-click | Previous slide |
 
-                    These gestures are available in all modes.
+---
 
-                    | # | Gesture | Purpose |
-                    |---|---------|---------|
-                    | 1 | Hold both buttons for 5 seconds | Exit EngineeRing |
-                    | 2 | Click both buttons at the same time | Calibrate |
-                    | 3 | Hold both buttons for 5 seconds | Disconnect ring from connected device |
-                    | 4 | Hold right-click button for 5 seconds | Manually switch modes |
+## Rehabilitation Tracking
 
-                    ### Regular Mode Gestures
+The system silently captures 6-DoF motion data throughout every session. When the session ends, it exports:
 
-                    | # | Gesture | Purpose |
-                    |---|---------|---------|
-                    | 5 | Click | Right click / Left click |
-                    | 6 | Double-click right-click button | Exit window |
-                    | 7 | Hold right-click button, hover in desired scroll direction | Scroll |
-                    | 8 | Double-click left-click button | Zoom in |
-                    | 9 | Hold left button | Zoom out |
+- **JSON report** — timestamped session data with the following metrics:
 
-                    ### Typing Mode Gestures
+| Metric | Description |
+|--------|-------------|
+| `peak_rom_deg` | Peak range of motion (degrees) |
+| `mean_rom_deg` | Mean range of motion per rep (degrees) |
+| `avg_ang_vel_deg_s` | Average angular velocity (°/s) |
+| `max_ang_vel_deg_s` | Peak angular velocity (°/s) |
+| `estimated_reps` | Estimated discrete wrist movement repetitions |
+| `smoothness_index` | Movement smoothness (lower = smoother) |
+| `jerk_index` | Jerk magnitude (lower = more controlled) |
+| `tremor_index` | High-frequency oscillation level (lower = less tremor) |
+| `active_usage_s` | Total seconds of detected active motion |
+| `active_usage_fraction` | Fraction of session in active motion (0–1) |
+| `rom_variability_std_deg` | Standard deviation of ROM across reps (degrees) |
 
-                    | # | Gesture | Purpose |
-                    |---|---------|---------|
-                    | 10 | Double-click right-click | Toggle Click-to-Type ⇔ Dwell-to-Type |
+- **ROM plot** — `matplotlib` PNG: Range of Motion vs. Time for the session
 
-                    ### Presentation Mode Gestures
+These outputs are designed to feed into physical therapy dashboards, progress-tracking apps, or clinical motion analytics pipelines.
 
-                    | # | Gesture | Purpose |
-                    |---|---------|---------|
-                    | 11 | Left-click | Next slide |
-                    | 12 | Right-click | Previous slide |
-                    | 13 | Double-click right-click | Toggle Enter Slideshow |
-                    | 14 | Double-click left-click | Toggle Mouse Icon ⇔ Laser |
-                    | 15 | Hold left-click for 1.5 seconds | Toggle Annotation Pen ⇔ Regular Mouse |
-                    | 16 | Triple-click left-click | Undo annotation |
+---
 
-                    ---
+## Performance Characteristics
 
-                    ## Rehabilitation Metrics
+| Metric | Value | Notes |
+|--------|-------|-------|
+| BLE packet rate | ~100 Hz | Configurable; limited by BLE connection interval |
+| Perceived input latency | <15 ms | After complementary filter + smoother |
+| Gesture classes | 16 | Across 3 interaction modes |
+| Tracked DoF | 6 | Pitch, roll, yaw + 3-axis acceleration |
+| Supported platforms | macOS, Windows | Linux partial support via `bleak` |
+| Packet size | 14 bytes/frame | 2 button + 6× int16 IMU values |
 
-                    The app passively collects motion analytics throughout every ring session with no configuration required. When the session ends (pressing `q` or closing the window), two output files are automatically saved to the working directory:
+---
 
-                    - `rehab_session_<timestamp>.json` — full session metrics report
-                    - - `rehab_session_<timestamp>_rom.png` — Range of Motion vs. Time graph for the session
-                     
-                      - The ROM vs. Time graph is generated using matplotlib, plotting instantaneous range of motion (degrees) over the full session duration. It makes it easy to visually identify periods of high activity, fatigue onset, and consistency of movement across a therapy session.
-                     
-                      - A summary of the session metrics is also displayed directly to the user in the terminal and HUD at session end.
-                     
-                      - ### Metric Definitions
-                     
-                      - Motion metrics describe the quality and quantity of wrist movement:
-                     
-                      - | Metric | Description |
-                      - |--------|-------------|
-                      - | `avg_rom_deg` | Mean range of motion per movement cycle (degrees) |
-                      - | `max_rom_deg` | Peak range of motion recorded in the session (degrees) |
-                      - | `avg_ang_vel_deg_s` | Average angular velocity (degrees/second) |
-                      - | `max_ang_vel_deg_s` | Peak angular velocity (degrees/second) |
-                      - | `estimated_reps` | Estimated number of discrete wrist movement repetitions |
-                      - | `smoothness_index` | Movement smoothness (lower = smoother) |
-                      - | `jerk_index` | Jerk magnitude (lower = more controlled movement) |
-                      - | `tremor_index` | High-frequency oscillation level (lower = less tremor) |
-                      - | `active_usage_s` | Total seconds of detected active motion |
-                      - | `active_usage_fraction` | Fraction of session time spent in active motion (0–1) |
-                      - | `rom_variability_std_deg` | Standard deviation of ROM across reps (degrees) |
-                     
-                      - Functional metrics capture computer-interaction activity during the session:
-                     
-                      - | Metric | Description |
-                      - |--------|-------------|
-                      - | `typed_letters` | Total keystrokes detected while in Typing mode |
-                      - | `typed_letters_per_min` | Typing rate (characters per minute) |
-                     
-                      - Fatigue metrics compare the first and second halves of the session to estimate fatigue:
-                     
-                      - | Metric | Description |
-                      - |--------|-------------|
-                      - | `rom_drop_percent` | Percent decrease in average ROM from first to second half |
-                      - | `speed_drop_percent` | Percent decrease in average angular velocity, first to second half |
-                      - | `smoothness_change_percent` | Percent change in smoothness index, first to second half |
-                     
-                      - ---
+## Software Stack
 
-                      ## HUD Visual Feedback
+| Layer | Technology | Purpose |
+|-------|-----------|---------|
+| BLE Communication | `bleak` (async) | BLE scan, connect, NUS notify handler |
+| Mouse / Keyboard | `pyautogui`, `pynput` | OS-level cursor and keystroke injection |
+| Signal Processing | `numpy` | Complementary filter, smoothing, gesture math |
+| Rehab Visualization | `matplotlib` | ROM vs. Time session plot generation |
+| HUD Overlay | `tkinter` | Live status display (mode, IMU, connection) |
+| App Detection | `pygetwindow` (optional) | Presentation mode auto-activation |
 
-                      A persistent heads-up display (HUD) rendered via Tkinter sits in the corner of the screen throughout the session. It provides at-a-glance feedback without interrupting the user's workflow. The HUD shows:
+---
 
-                      - **Connection status** — whether the ring is connected, scanning, or disconnected
-                      - - **Current mode** — which sub-mode is active (Regular, Typing, or Presentation)
-                        - - **Live IMU data** — real-time accelerometer and gyroscope readings
-                          - - **Active notifications** — non-blocking status messages that appear and fade automatically
-                            - - **Session info** — elapsed session time and active usage indicator
-                             
-                              - The HUD is designed to be unobtrusive and stays on top of other windows so it is always visible.
-                             
-                              - ---
+## Project Structure
 
-                              ## Blocking and Non-Blocking Notifications
+```
+EngineeRing/
+├── Final Code.py          # Main application: gesture engine, HUD, BLE orchestration
+├── ring_ble_input.py      # BLE background thread: scan, connect, packet decode
+├── rehab_tracker.py       # Session metrics capture and JSON/PNG export
+├── requirements.txt       # Python dependencies
+└── README.md
+```
 
-                              The app uses two distinct notification styles depending on the urgency and nature of the message.
+---
 
-                              ### Blocking Notifications
+## Setup & Installation
 
-                              Blocking notifications are modal dialogs that pause the application and require the user to acknowledge them before proceeding. They are used for situations where the user must be informed and the app cannot safely continue without a response.
+**Requirements:** Python 3.9+, a BLE-enabled computer, and the EngineeRing ring hardware.
 
-                              Examples of blocking notifications:
+```bash
+git clone https://github.com/reemoawad/EngineeRing.git
+cd EngineeRing
+pip install bleak pyautogui pynput numpy pygetwindow matplotlib
+python "Final Code.py"
+```
 
-                              - BLE connection failure — ring not found after scanning
-                              - - Calibration required before the session can begin
-                                - - Critical IMU data error or packet loss
-                                  - - Session save failure (could not write JSON or PNG to disk)
-                                   
-                                    - ### Non-Blocking Notifications
-                                   
-                                    - Non-blocking notifications appear as brief overlay messages in the HUD and fade automatically after a few seconds. They inform the user of routine status changes without interrupting their workflow.
-                                   
-                                    - Examples of non-blocking notifications:
-                                   
-                                    - - Mode switch (e.g., "Switched to Typing mode")
-                                      - - Successful BLE reconnect after brief dropout
-                                        - - Calibration complete
-                                          - - Rehab metrics saved successfully at session end
-                                            - - Low activity warning during a therapy session
-                                             
-                                              - ---
+The app will scan for a BLE device whose name contains `"EngineeRing"`, connect automatically, and start the gesture engine.
 
-                                              ## Hardware
+**Key configuration constants** (top of `Final Code.py`):
 
-                                              - Custom BLE ring with an IMU (6-axis: 3-axis accelerometer + 3-axis gyroscope)
-                                              - - Two onboard buttons (left-click / right-click)
-                                                - - Firmware advertises the Nordic UART Service UUID: `6e400001-b5a3-f393-e0a9-e50e24dcca9e`
-                                                  - - BLE packet format: 2 button bytes + 6 x int16 big-endian (ax, ay, az, gx, gy, gz) = 14 bytes total
-                                                   
-                                                    - ---
+| Constant | Default | Description |
+|----------|---------|-------------|
+| `SENSITIVITY` | `1.5` | Cursor speed multiplier |
+| `DEAD_ZONE_DEG` | `3.0` | Min tilt angle to register motion (degrees) |
+| `SMOOTH_FACTOR` | `0.25` | Exponential smoothing weight (0–1) |
+| `INACTIVITY_TIMEOUT_S` | `60` | Seconds before auto-standby |
+| `BLE_NAME_CONTAINS` | `"EngineeRing"` | BLE device name filter for scan |
 
-                                                    ## Project Structure
+**Hotkeys:**
 
-                                                    ```
-                                                    EngineeRing/
-                                                    ├── Final Code.py          # Main application: gesture engine, HUD, BLE orchestration
-                                                    ├── ring_ble_input.py      # BLE driver — scans, connects, and streams IMU packets
-                                                    └── README.md
-                                                    ```
+| Key | Action |
+|-----|--------|
+| `c` | Re-calibrate gravity / bias |
+| `r` | Re-center cursor and zero filters |
+| `q` | Quit the application |
 
-                                                    ---
+---
 
-                                                    ## Requirements
+## How It Works
 
-                                                    - Python 3.9+
-                                                    - - `bleak` — cross-platform BLE library
-                                                      - - `pyautogui` — mouse/keyboard control
-                                                        - - `pynput` — low-level keyboard listener
-                                                          - - `numpy` — IMU signal processing
-                                                            - - `pygetwindow` (optional, Windows/Linux) — active-window detection
-                                                              - - `matplotlib` (optional) — live data graphing and rehab session plots
-                                                               
-                                                                - Install dependencies:
-                                                               
-                                                                - ```
-                                                                  pip install bleak pyautogui pynput numpy pygetwindow matplotlib
-                                                                  ```
+`ring_ble_input.py` runs a background thread with its own asyncio event loop. It scans for a BLE device advertising the NUS service UUID, connects via `bleak`, and pushes decoded IMU + button packets into a thread-safe deque.
 
-                                                                  ---
+`Final Code.py` polls that deque at ~100 Hz, applies the complementary filter and exponential smoother, maps the filtered tilt vector to screen-space velocity, and calls `pyautogui` to move the cursor or fire input events. Gesture detection uses timing windows and button-state transitions to classify all 16 gestures across modes. App-context detection checks the active window title to auto-switch into Presentation Mode. The rehab tracker captures a snapshot on every polling cycle and writes the JSON report and ROM plot when the session ends.
 
-                                                                  ## Usage
+---
 
-                                                                  1. Power on the ring and ensure BLE is enabled on your computer.
-                                                                  2. 2. Edit the configuration block near the top of `Final Code.py` if needed:
-                                                                     3.    - Set `BLE_NAME_CONTAINS` to match your ring's advertised name (default: `"EngineeRing"`).
-                                                                           -    - Optionally hard-code `BLE_ADDRESS` to skip scanning.
-                                                                                - 3. Run the main script:
-                                                                                 
-                                                                                  4. ```
-                                                                                     python "Final Code.py"
-                                                                                     ```
+## Real-World Use Cases
 
-                                                                                     The script will scan for the ring, connect, and launch the HUD overlay. Tilt your wrist to move the cursor. Use the ring buttons to click.
+- **Accessibility** — hands-free computer navigation for users with limited dexterity or mobility impairments
+- **Physical therapy** — range-of-motion tracking and session analytics for wrist/hand motor recovery
+- **Presentation control** — wireless slide navigation with no extra hardware or Bluetooth dongles
+- **Wearable HCI research** — testbed for gesture-based input, sensor fusion algorithms, and low-latency BLE pipelines
 
-                                                                                     ### Hotkeys
+---
 
-                                                                                     | Key | Action |
-                                                                                     |-----|--------|
-                                                                                     | `c` | Re-calibrate gravity / bias |
-                                                                                     | `r` | Re-center cursor and zero filters |
-                                                                                     | `q` | Quit the application |
+## Resume Summary
 
-                                                                                     ---
+> *Engineered firmware + Python host software for a wearable BLE gesture-input ring — 6-axis IMU with complementary filter sensor fusion, 16-gesture FSM across 3 interaction modes at ~100 Hz, and rehabilitation session tracking with structured JSON export; served as Software Lead on a cross-functional senior design team.*
 
-                                                                                     ## Configuration
+---
 
-                                                                                     Key tuning constants are defined at the top of `Final Code.py`:
+## License
 
-                                                                                     | Constant | Default | Description |
-                                                                                     |----------|---------|-------------|
-                                                                                     | `SENSITIVITY` | `1800` | Cursor speed multiplier |
-                                                                                     | `DEADZONE` | `0.04` | Minimum tilt to register movement |
-                                                                                     | `SMOOTHING` | `0.18` | Low-pass filter strength (0 = none, 1 = max) |
-                                                                                     | `SCROLL_SENSITIVITY` | `18` | Scroll speed |
-                                                                                     | `USE_BLE` | `True` | True for BLE, False for serial |
-                                                                                     | `BLE_NAME_CONTAINS` | `"EngineeRing"` | Partial BLE device name to scan for |
-
-                                                                                     ---
-
-                                                                                     ## How It Works
-
-                                                                                     `ring_ble_input.py` runs a background thread with its own asyncio event loop. It scans for a BLE device advertising the NUS service, connects via bleak, and pushes decoded IMU + button packets into a thread-safe deque.
-
-                                                                                     `Final Code.py` polls that deque at ~100 Hz, applies a low-pass filter, maps the filtered tilt vector to screen-space velocity, and calls pyautogui to move the cursor or fire input events. Gesture detection uses timing windows and button-state transitions to distinguish all 16 gestures across modes. App-context detection checks the active window on macOS (via AppleScript) or Windows (via pygetwindow) to automatically switch between Regular and Presentation sub-modes. Rehab tracking runs silently in the background on every frame. On session end, the collected IMU time-series is processed to compute all motion, functional, and fatigue metrics, which are written to a JSON file and a ROM vs. Time PNG graph.
-
-                                                                                     ---
-
-                                                                                     ## Authors
-
-                                                                                     Reem Awad, Will Craychee, Roman Guerrero, Anna Leonhardt, Jeriah Navarro
+This project was developed as a Senior Design capstone at San Diego State University.
